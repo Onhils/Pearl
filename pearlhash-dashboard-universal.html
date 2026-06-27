@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pearlhash — Těžební dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.js"></script>
+<style>
+  :root{
+    --bg:#0b1020; --panel:#141b30; --panel2:#1b2440; --line:#27314f;
+    --txt:#e7ecf6; --muted:#9aa6c4; --accent:#6ea8ff; --good:#4ade80;
+    --gold:#ffd166; --bad:#f87171; --usd:#34d399;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:linear-gradient(180deg,#0a0e1c,#0b1020 40%);color:var(--txt);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  .wrap{max-width:1180px;margin:0 auto;padding:22px 18px 60px}
+
+  /* header */
+  .titlerow{display:flex;align-items:center;gap:12px}
+  h1{font-size:20px;margin:0;font-weight:700;letter-spacing:.2px}
+  h1 .dot{color:var(--gold)}
+  .badge{font-size:11px;padding:3px 9px;border-radius:999px;border:1px solid var(--line);
+    background:var(--panel2);color:var(--muted);white-space:nowrap}
+  .badge.live{color:#062;background:#bdf7cf;border-color:#bdf7cf}
+  .badge.snap{color:#5a4500;background:#ffe69a;border-color:#ffe69a}
+  .badge.err{color:#fff;background:#b91c1c;border-color:#b91c1c}
+
+  .toolbar{display:flex;flex-wrap:wrap;gap:10px;margin:14px 0 4px;align-items:center}
+  .field{display:flex;align-items:center;gap:6px;background:var(--panel);border:1px solid var(--line);
+    border-radius:10px;padding:6px 10px;font-size:12.5px;color:var(--muted)}
+  .field.addr{flex:1 1 420px;min-width:260px}
+  .field.addr input{flex:1;min-width:120px;background:var(--panel2);border:1px solid var(--line);
+    color:var(--txt);border-radius:7px;padding:6px 8px;font-size:12.5px;font-family:ui-monospace,Menlo,monospace}
+  .field.price input{width:78px;background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+    border-radius:7px;padding:5px 6px;font-size:13px;text-align:right}
+  button{background:var(--accent);color:#06122c;border:0;border-radius:9px;padding:7px 13px;
+    font-weight:600;font-size:12.5px;cursor:pointer;white-space:nowrap}
+  button.ghost{background:var(--panel2);color:var(--txt);border:1px solid var(--line)}
+  button:disabled{opacity:.5;cursor:default}
+  .rangebar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .chips{display:flex;gap:3px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:3px}
+  .chips button{background:transparent;color:var(--muted);padding:5px 11px;font-size:12px;border-radius:7px;font-weight:600}
+  .chips button.active{background:var(--accent);color:#06122c}
+
+  /* layout */
+  .grid{display:grid;gap:14px}
+  .hero{grid-template-columns:repeat(auto-fit,minmax(220px,1fr));margin:16px 0}
+  .strip{grid-template-columns:repeat(auto-fit,minmax(170px,1fr));margin:0 0 18px}
+  .twocol{grid-template-columns:1fr 1fr}
+  @media(max-width:820px){.twocol{grid-template-columns:1fr}}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
+  .card.hi{background:linear-gradient(160deg,#1c2647,#141b30);border-color:#34406b}
+  .card .k{font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px}
+  .card .v{font-weight:700;line-height:1.05;margin-top:8px}
+  .hero .v{font-size:30px}
+  .strip .v{font-size:21px;margin-top:6px}
+  .card .v small{font-size:13px;color:var(--muted);font-weight:600}
+  .card .u{font-size:15px;color:var(--usd);font-weight:700;margin-top:3px}
+  .card .s{font-size:12px;color:var(--muted);margin-top:6px}
+  .v.gold{color:var(--gold)} .v.acc{color:var(--accent)}
+
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:16px}
+  .panel h2{font-size:14px;margin:0;font-weight:700}
+  .panel .ph{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:12px}
+  .panel .hint{font-size:12px;color:var(--muted);margin-top:2px}
+  .chartbox{position:relative;height:300px}
+  .chartbox.sm{height:220px}
+
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{padding:8px 10px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+  th:first-child,td:first-child{text-align:left}
+  th{color:var(--muted);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.5px;
+    position:sticky;top:0;background:var(--panel)}
+  tr:hover td{background:var(--panel2)}
+  tr.yday td{background:#1f2c4d}
+  tr.today td{color:var(--muted);font-style:italic}
+  .tablewrap{max-height:360px;overflow:auto;border-radius:10px}
+  .pos{color:var(--good)} .neg{color:var(--bad)} .tag{font-size:10.5px;color:var(--muted);font-weight:600}
+
+  footer{color:var(--muted);font-size:11.5px;margin-top:24px;line-height:1.6}
+  a{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="titlerow">
+      <h1>Pearlhash <span class="dot">•</span> Těžební dashboard</h1>
+      <span class="badge" id="srcBadge">…</span>
+    </div>
+    <div class="toolbar">
+      <div class="field addr">
+        <span>Účet</span>
+        <input id="addrInput" placeholder="prl1… vlož adresu účtu" spellcheck="false">
+        <button id="loadBtn">Načíst</button>
+      </div>
+      <div class="field price">PRL/USD&nbsp;$<input id="price" type="number" step="0.0001" value="0.66">
+        <span id="priceSrc" style="font-size:11px"></span></div>
+      <button id="refresh" class="ghost">↻ Obnovit</button>
+    </div>
+  </header>
+
+  <!-- HLAVNÍ FOCUS: denní vytěžení -->
+  <div class="grid hero">
+    <div class="card hi" id="cardYday"></div>
+    <div class="card hi" id="cardToday"></div>
+    <div class="card hi" id="cardAvg"></div>
+  </div>
+
+  <!-- doplňkové ukazatele -->
+  <div class="grid strip" id="strip"></div>
+
+  <div class="panel">
+    <div class="ph">
+      <div><h2>Denní vytěžení <span class="tag" id="rangeLbl"></span></h2>
+        <div class="hint">Sloupce = PRL/den (levá osa) • plocha = hodnota v USD (pravá osa) • dnešek je neúplný den</div></div>
+      <div class="rangebar">
+        <div class="chips" id="rangeChips">
+          <button data-r="7">7 dní</button>
+          <button data-r="14">14 dní</button>
+          <button data-r="30">30 dní</button>
+          <button data-r="all">Vše</button>
+        </div>
+        <button class="ghost" id="expCsv">⤓ CSV</button>
+        <button class="ghost" id="expJson">⤓ JSON</button>
+      </div>
+    </div>
+    <div class="chartbox"><canvas id="dailyChart"></canvas></div>
+    <div class="hint" id="dailySum" style="margin-top:10px"></div>
+  </div>
+
+  <div class="panel">
+    <div class="ph"><div><h2>Denní přehled</h2>
+      <div class="hint">Kolik jsi vytěžil každý den — nejnovější nahoře</div></div></div>
+    <div class="tablewrap">
+      <table id="dailyTable"><thead><tr>
+        <th>Den</th><th></th><th>Epochy</th><th>Vytěženo PRL</th><th>Hodnota USD</th><th>Ø / hodina</th><th>Vyplaceno</th>
+      </tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+
+  <div class="grid twocol">
+    <div class="panel">
+      <div class="ph"><div><h2>Posledních 48 hodin</h2><div class="hint">Vytěžení po hodinách (PRL)</div></div></div>
+      <div class="chartbox sm"><canvas id="hourlyChart"></canvas></div>
+    </div>
+    <div class="panel">
+      <div class="ph"><div><h2>Připravené odměny</h2><div class="hint">Epochy ještě nepřipsané na zůstatek</div></div></div>
+      <div class="chartbox sm"><canvas id="pendingChart"></canvas></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="ph"><div><h2>Připojené workery</h2><div class="hint" id="hashNow"></div></div></div>
+    <div class="tablewrap">
+      <table id="workerTable"><thead><tr>
+        <th>Worker</th><th>Verze</th><th>GPU</th><th>Hashrate</th>
+      </tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+
+  <footer id="foot"></footer>
+</div>
+
+<script>
+const DEFAULT_ACCOUNT = "prl1pzdky20xjrduj08apwl4xke3fsjfkleaujx754d6jrpks9zgr5q4q97s0uy";
+const apiUrl = a => "https://pearlhash.xyz/api/account/" + a;
+const PRICE_API = "https://api.coingecko.com/api/v3/simple/price?ids=pearl-2&vs_currencies=usd";
+
+// Vestavěný snapshot (záloha při CORS bloku) — platí jen pro výchozí účet
+const SNAPSHOT = {"asOf":"2026-06-27T10:00:00Z","account":DEFAULT_ACCOUNT,"data":{"connected_workers":[{"ip":"18.184.95.225","worker_name":"","worker_id":3855287466792434700,"version":"WildRig_0.48.8","gpu_info":[{"name":"NVIDIA GeForce RTX 3070","hashrate":61298396035515.17},{"name":"NVIDIA GeForce RTX 3070","hashrate":61298396035515.17},{"name":"NVIDIA GeForce RTX 3070","hashrate":61329294957608.21},{"name":"NVIDIA GeForce RTX 3070","hashrate":61322453987730.06},{"name":"NVIDIA GeForce RTX 3070","hashrate":60979738907849.836},{"name":"NVIDIA GeForce RTX 3070","hashrate":61322453987730.06}]},{"ip":"18.184.95.225","worker_name":"","worker_id":7813452841708296000,"version":"WildRig_0.48.8","gpu_info":[{"name":"NVIDIA GeForce RTX 3070","hashrate":57767684763572.69},{"name":"NVIDIA GeForce RTX 3070","hashrate":61168934631432.55},{"name":"NVIDIA GeForce RTX 3070","hashrate":61280389281886.38},{"name":"NVIDIA GeForce RTX 3070","hashrate":61288272017837.234},{"name":"NVIDIA GeForce RTX 3070","hashrate":61260691310403.945},{"name":"NVIDIA GeForce RTX 3070","hashrate":61288272017837.234},{"name":"NVIDIA GeForce RTX 3070","hashrate":61267781121141.195},{"name":"NVIDIA GeForce RTX 3070","hashrate":60682024198683.92}]},{"ip":"18.184.95.225","worker_name":"","worker_id":11110055875018190000,"version":"WildRig_0.48.8","gpu_info":[{"name":"NVIDIA GeForce RTX 3070","hashrate":61240481229809.51},{"name":"NVIDIA GeForce RTX 3070","hashrate":61288272017837.234},{"name":"NVIDIA GeForce RTX 3070","hashrate":61247303921568.625}]}],"balance_transactions":[{"amount":0.4097814429185074,"reason":"Epoch 2026-06-24 19:00:00 UTC .. 2026-06-24 20:00:00 UTC credit","timestamp":1782348347792},{"amount":2.2691889575750186,"reason":"Epoch 2026-06-24 20:00:00 UTC .. 2026-06-24 21:00:00 UTC credit","timestamp":1782352038781},{"amount":-2.678970400493526,"reason":"Auto Payment","timestamp":1782354010835},{"amount":1.2586843370896559,"reason":"Epoch 2026-06-24 21:00:00 UTC .. 2026-06-24 22:00:00 UTC credit","timestamp":1782358156589},{"amount":0.888268799537213,"reason":"Epoch 2026-06-24 22:00:00 UTC .. 2026-06-24 23:00:00 UTC credit","timestamp":1782361062397},{"amount":-2.146953136626869,"reason":"Auto Payment","timestamp":1782361216758},{"amount":0.4493717281981198,"reason":"Epoch 2026-06-24 23:00:00 UTC .. 2026-06-25 00:00:00 UTC credit","timestamp":1782365262494},{"amount":1.936598648100024,"reason":"Epoch 2026-06-25 00:00:00 UTC .. 2026-06-25 01:00:00 UTC credit","timestamp":1782370756334},{"amount":0.3715873356611564,"reason":"Epoch 2026-06-25 01:00:00 UTC .. 2026-06-25 02:00:00 UTC credit","timestamp":1782373473478},{"amount":-2.7575577119593,"reason":"Auto Payment","timestamp":1782375628326},{"amount":0.735112241436025,"reason":"Epoch 2026-06-25 02:00:00 UTC .. 2026-06-25 03:00:00 UTC credit","timestamp":1782375745116},{"amount":0.4087193884346042,"reason":"Epoch 2026-06-25 03:00:00 UTC .. 2026-06-25 04:00:00 UTC credit","timestamp":1782378241012},{"amount":1.167526927771018,"reason":"Epoch 2026-06-25 04:00:00 UTC .. 2026-06-25 05:00:00 UTC credit","timestamp":1782382286481},{"amount":-2.3113585576416473,"reason":"Auto Payment","timestamp":1782382834546},{"amount":0.7804801320346525,"reason":"Epoch 2026-06-25 05:00:00 UTC .. 2026-06-25 06:00:00 UTC credit","timestamp":1782384655964},{"amount":1.221061013263296,"reason":"Epoch 2026-06-25 06:00:00 UTC .. 2026-06-25 07:00:00 UTC credit","timestamp":1782387497658},{"amount":-2.0015411452979484,"reason":"Auto Payment","timestamp":1782390040419},{"amount":1.6438697891451863,"reason":"Epoch 2026-06-25 07:00:00 UTC .. 2026-06-25 08:00:00 UTC credit","timestamp":1782390339246},{"amount":0.7901243970036139,"reason":"Epoch 2026-06-25 08:00:00 UTC .. 2026-06-25 09:00:00 UTC credit","timestamp":1782394825845},{"amount":1.0130245009391086,"reason":"Epoch 2026-06-25 09:00:00 UTC .. 2026-06-25 10:00:00 UTC credit","timestamp":1782397161291},{"amount":-3.4470186870879087,"reason":"Auto Payment","timestamp":1782397247480},{"amount":2.510201534343867,"reason":"Epoch 2026-06-25 10:00:00 UTC .. 2026-06-25 11:00:00 UTC credit","timestamp":1782401926684},{"amount":-2.510201534343867,"reason":"Auto Payment","timestamp":1782404452881},{"amount":2.609020141739875,"reason":"Epoch 2026-06-25 11:00:00 UTC .. 2026-06-25 12:00:00 UTC credit","timestamp":1782406353962},{"amount":2.732803932042406,"reason":"Epoch 2026-06-25 12:00:00 UTC .. 2026-06-25 13:00:00 UTC credit","timestamp":1782410555920},{"amount":-5.341824073782281,"reason":"Auto Payment","timestamp":1782411658792},{"amount":0.2962081360230962,"reason":"Epoch 2026-06-25 13:00:00 UTC .. 2026-06-25 14:00:00 UTC credit","timestamp":1782412861789},{"amount":0.5403035258602676,"reason":"Epoch 2026-06-25 14:00:00 UTC .. 2026-06-25 15:00:00 UTC credit","timestamp":1782415864299},{"amount":0.552386313397483,"reason":"Epoch 2026-06-25 15:00:00 UTC .. 2026-06-25 16:00:00 UTC credit","timestamp":1782419309130},{"amount":1.00059298916788,"reason":"Epoch 2026-06-25 16:00:00 UTC .. 2026-06-25 17:00:00 UTC credit","timestamp":1782423511664},{"amount":-2.3894909644487266,"reason":"Auto Payment","timestamp":1782426069639},{"amount":0.9590304507530252,"reason":"Epoch 2026-06-25 17:00:00 UTC .. 2026-06-25 18:00:00 UTC credit","timestamp":1782426421958},{"amount":0.8211155887224342,"reason":"Epoch 2026-06-25 18:00:00 UTC .. 2026-06-25 19:00:00 UTC credit","timestamp":1782432043945},{"amount":-1.7801460394754594,"reason":"Auto Payment","timestamp":1782433276648},{"amount":0.43813463892859644,"reason":"Epoch 2026-06-25 19:00:00 UTC .. 2026-06-25 20:00:00 UTC credit","timestamp":1782434508141},{"amount":0.14123478137979792,"reason":"Epoch 2026-06-25 20:00:00 UTC .. 2026-06-25 21:00:00 UTC credit","timestamp":1782439162554},{"amount":0.36842116315410706,"reason":"Epoch 2026-06-25 21:00:00 UTC .. 2026-06-25 22:00:00 UTC credit","timestamp":1782444288527},{"amount":0.40681984146215816,"reason":"Epoch 2026-06-25 22:00:00 UTC .. 2026-06-25 23:00:00 UTC credit","timestamp":1782450620203},{"amount":0.3616702247525992,"reason":"Epoch 2026-06-25 23:00:00 UTC .. 2026-06-26 00:00:00 UTC credit","timestamp":1782453128823},{"amount":-1.7162806496772587,"reason":"Auto Payment","timestamp":1782454894715},{"amount":0.17456512014814113,"reason":"Epoch 2026-06-26 00:00:00 UTC .. 2026-06-26 01:00:00 UTC credit","timestamp":1782457070179},{"amount":0.1990883577416616,"reason":"Epoch 2026-06-26 01:00:00 UTC .. 2026-06-26 02:00:00 UTC credit","timestamp":1782459838077},{"amount":0.13720461452046218,"reason":"Epoch 2026-06-26 02:00:00 UTC .. 2026-06-26 03:00:00 UTC credit","timestamp":1782462974689},{"amount":0.609116049258074,"reason":"Epoch 2026-06-26 03:00:00 UTC .. 2026-06-26 04:00:00 UTC credit","timestamp":1782468311059},{"amount":0.16105115329441805,"reason":"Epoch 2026-06-26 04:00:00 UTC .. 2026-06-26 05:00:00 UTC credit","timestamp":1782469102299},{"amount":-1.281025294962757,"reason":"Auto Payment","timestamp":1782469307906},{"amount":1.0833418095258622,"reason":"Epoch 2026-06-26 05:00:00 UTC .. 2026-06-26 06:00:00 UTC credit","timestamp":1782472149054},{"amount":-1.0833418095258622,"reason":"Auto Payment","timestamp":1782476513138},{"amount":1.6985406027715293,"reason":"Epoch 2026-06-26 06:00:00 UTC .. 2026-06-26 07:00:00 UTC credit","timestamp":1782477009672},{"amount":0,"reason":"Epoch 2026-06-26 12:00:00 UTC .. 2026-06-26 13:00:00 UTC credit","timestamp":1782478822444},{"amount":1.3054573021420262,"reason":"Epoch 2026-06-26 07:00:00 UTC .. 2026-06-26 08:00:00 UTC credit","timestamp":1782480598252},{"amount":1.1627782509033606,"reason":"Epoch 2026-06-26 08:00:00 UTC .. 2026-06-26 09:00:00 UTC credit","timestamp":1782483074368},{"amount":-4.166776155816916,"reason":"Auto Payment","timestamp":1782483719377},{"amount":2.062794657837339,"reason":"Epoch 2026-06-26 09:00:00 UTC .. 2026-06-26 10:00:00 UTC credit","timestamp":1782486514340},{"amount":0.679799811278938,"reason":"Epoch 2026-06-26 10:00:00 UTC .. 2026-06-26 11:00:00 UTC credit","timestamp":1782490361911},{"amount":-2.742594469116277,"reason":"Auto Payment","timestamp":1782490925581},{"amount":0.2137272007916128,"reason":"Epoch 2026-06-26 11:00:00 UTC .. 2026-06-26 12:00:00 UTC credit","timestamp":1782495005649},{"amount":0.3019209927724807,"reason":"Epoch 2026-06-26 13:00:00 UTC .. 2026-06-26 14:00:00 UTC credit","timestamp":1782501615166},{"amount":0.20162507107199928,"reason":"Epoch 2026-06-26 14:00:00 UTC .. 2026-06-26 15:00:00 UTC credit","timestamp":1782504699261},{"amount":0.13998664880188047,"reason":"Epoch 2026-06-26 15:00:00 UTC .. 2026-06-26 16:00:00 UTC credit","timestamp":1782508669042},{"amount":0.26834277280547686,"reason":"Epoch 2026-06-26 16:00:00 UTC .. 2026-06-26 17:00:00 UTC credit","timestamp":1782510607274},{"amount":-1.1256026862434503,"reason":"Auto Payment","timestamp":1782512543279},{"amount":0.391087690941001,"reason":"Epoch 2026-06-26 17:00:00 UTC .. 2026-06-26 18:00:00 UTC credit","timestamp":1782513214875},{"amount":0.36930912087788703,"reason":"Epoch 2026-06-26 18:00:00 UTC .. 2026-06-26 19:00:00 UTC credit","timestamp":1782515347482},{"amount":0.49405357149244417,"reason":"Epoch 2026-06-26 19:00:00 UTC .. 2026-06-26 20:00:00 UTC credit","timestamp":1782521317005},{"amount":0.15911214437790966,"reason":"Epoch 2026-06-26 20:00:00 UTC .. 2026-06-26 21:00:00 UTC credit","timestamp":1782524080852},{"amount":-1.4135625276892418,"reason":"Auto Payment","timestamp":1782526955782},{"amount":0.2849919411417029,"reason":"Epoch 2026-06-26 21:00:00 UTC .. 2026-06-26 22:00:00 UTC credit","timestamp":1782529073265},{"amount":0.21034367303261853,"reason":"Epoch 2026-06-26 22:00:00 UTC .. 2026-06-26 23:00:00 UTC credit","timestamp":1782534064186},{"amount":0.22472153583862275,"reason":"Epoch 2026-06-26 23:00:00 UTC .. 2026-06-27 00:00:00 UTC credit","timestamp":1782536519583},{"amount":0.37448958596576426,"reason":"Epoch 2026-06-27 00:00:00 UTC .. 2026-06-27 01:00:00 UTC credit","timestamp":1782541288614},{"amount":-1.0945467359787084,"reason":"Auto Payment","timestamp":1782541368405},{"amount":0.04526484789919077,"reason":"Epoch 2026-06-27 01:00:00 UTC .. 2026-06-27 02:00:00 UTC credit","timestamp":1782544344262},{"amount":0.3194401142430907,"reason":"Epoch 2026-06-27 02:00:00 UTC .. 2026-06-27 03:00:00 UTC credit","timestamp":1782547625763},{"amount":0.25183805393492387,"reason":"Epoch 2026-06-27 03:00:00 UTC .. 2026-06-27 04:00:00 UTC credit","timestamp":1782549788432},{"amount":0.2763093977336131,"reason":"Epoch 2026-06-27 04:00:00 UTC .. 2026-06-27 05:00:00 UTC credit","timestamp":1782553982829},{"amount":0.12279942841353511,"reason":"Epoch 2026-06-27 05:00:00 UTC .. 2026-06-27 06:00:00 UTC credit","timestamp":1782555163404},{"amount":-1.0156518422243537,"reason":"Auto Payment","timestamp":1782555780826},{"amount":0.22962799883279106,"reason":"Epoch 2026-06-27 06:00:00 UTC .. 2026-06-27 07:00:00 UTC credit","timestamp":1782558596344},{"amount":0.17972692711201382,"reason":"Epoch 2026-06-27 07:00:00 UTC .. 2026-06-27 08:00:00 UTC credit","timestamp":1782562192320},{"amount":0.6529486523379077,"reason":"Epoch 2026-06-27 08:00:00 UTC .. 2026-06-27 09:00:00 UTC credit","timestamp":1782566518832}],"pending_rewards":{"total_pending":7.066865400191352,"epochs":[{"epoch_label":"2026-06-27 09:00:00 UTC .. 2026-06-27 10:00:00 UTC","amount":2.0985427720271908,"share":0.00010221974927708507,"immature_tx":1},{"epoch_label":"2026-06-27 10:00:00 UTC .. 2026-06-27 11:00:00 UTC","amount":1.262495466157041,"share":0.00008200073380143838,"immature_tx":6},{"epoch_label":"2026-06-27 11:00:00 UTC .. 2026-06-27 12:00:00 UTC","amount":1.884371001972134,"share":0.00010491355758694579,"immature_tx":7},{"epoch_label":"2026-06-27 12:00:00 UTC .. 2026-06-27 13:00:00 UTC","amount":1.821456160034987,"share":0.00010141701526587463,"immature_tx":7}]}}};
+
+let account = (function(){ try{return localStorage.getItem('prl_account')||DEFAULT_ACCOUNT;}catch(e){return DEFAULT_ACCOUNT;} })();
+let rangeMode = (function(){ try{const r=localStorage.getItem('prl_range'); return r==='all'?'all':(parseInt(r)||14);}catch(e){return 14;} })();
+let lastData=null, lastMeta={}, lastAgg=null;
+function selectKeys(allKeys){ return rangeMode==='all' ? allKeys.slice() : allKeys.slice(-rangeMode); }
+const charts={};
+const DOW=['ne','po','út','st','čt','pá','so'];
+
+const fmt=(n,d=2)=>Number(n).toLocaleString('cs-CZ',{minimumFractionDigits:d,maximumFractionDigits:d});
+const usd=n=>'$'+fmt(n,2);
+const price=()=>parseFloat(document.getElementById('price').value)||0;
+function fmtHash(h){const u=['H/s','kH/s','MH/s','GH/s','TH/s','PH/s','EH/s'];let i=0,v=h;
+  while(v>=1000&&i<u.length-1){v/=1000;i++;}return fmt(v,v<10?2:1)+' '+u[i];}
+function dateLabel(d){const dt=new Date(d+'T12:00:00Z');return DOW[dt.getUTCDay()]+' '+d.slice(8,10)+'.'+d.slice(5,7)+'.';}
+
+function aggregate(data){
+  const tx=data.balance_transactions||[];
+  const days={}, hours={}; let totalMined=0, totalPaid=0;
+  const D=k=>days[k]=days[k]||{prl:0,epochs:0,paid:0};
+  for(const t of tx){
+    if(/credit/i.test(t.reason)&&t.amount>0){
+      const m=t.reason.match(/^Epoch (\d{4}-\d{2}-\d{2}) (\d{2}):/); if(!m) continue;
+      D(m[1]).prl+=t.amount; D(m[1]).epochs++; totalMined+=t.amount;
+      hours[m[1]+' '+m[2]]=(hours[m[1]+' '+m[2]]||0)+t.amount;
+    } else if(/payment/i.test(t.reason)&&t.amount<0){
+      totalPaid+=-t.amount;
+      D(new Date(t.timestamp).toISOString().slice(0,10)).paid+=-t.amount;
+    }
+  }
+  const dayKeys=Object.keys(days).sort();
+  const workers=data.connected_workers||[]; let hashNow=0,gpu=0;
+  for(const w of workers)for(const g of (w.gpu_info||[])){hashNow+=g.hashrate;gpu++;}
+  const pend=data.pending_rewards||{total_pending:0,epochs:[]};
+  return {days,dayKeys,hours,totalMined,totalPaid,workers,hashNow,gpu,pend};
+}
+
+function render(data,meta){
+  lastData=data; lastMeta=meta;
+  const A=aggregate(data), p=price(); lastAgg=A;
+  const selKeys=selectKeys(A.dayKeys);
+  const now=new Date();
+  const todayKey=now.toISOString().slice(0,10);
+  const ydayKey=new Date(now.getTime()-86400000).toISOString().slice(0,10);
+  const dY=A.days[ydayKey]||{prl:0,epochs:0,paid:0};
+  const dT=A.days[todayKey]||{prl:0,epochs:0,paid:0};
+
+  // VČERA (hlavní)
+  document.getElementById('cardYday').innerHTML=
+    `<div class="k">Včera vytěženo · ${dateLabel(ydayKey)}</div>
+     <div class="v gold">${fmt(dY.prl,2)} <small>PRL</small></div>
+     <div class="u">${usd(dY.prl*p)}</div>
+     <div class="s">${dY.epochs}/24 hodin připsáno${dY.epochs<24&&dY.epochs>0?' (neúplné)':''}</div>`;
+
+  // DNES zatím + odhad
+  const est=dT.epochs?dT.prl/dT.epochs*24:0;
+  document.getElementById('cardToday').innerHTML=
+    `<div class="k">Dnes zatím · ${dateLabel(todayKey)}</div>
+     <div class="v gold">${fmt(dT.prl,2)} <small>PRL</small></div>
+     <div class="u">${usd(dT.prl*p)}</div>
+     <div class="s">${dT.epochs}/24 h • odhad celý den ~${fmt(est,1)} PRL (${usd(est*p)})</div>`;
+
+  // průměr za posledních 7 ÚPLNÝCH dní (bez dneška)
+  const full=A.dayKeys.filter(d=>d!==todayKey).slice(-7);
+  const avg=full.length?full.reduce((s,d)=>s+A.days[d].prl,0)/full.length:0;
+  document.getElementById('cardAvg').innerHTML=
+    `<div class="k">Ø za den (${full.length} dní)</div>
+     <div class="v gold">${fmt(avg,2)} <small>PRL</small></div>
+     <div class="u">${usd(avg*p)} / den</div>
+     <div class="s">klouzavý průměr úplných dní</div>`;
+
+  // strip
+  const strip=[
+    {k:'Aktuální hashrate',v:fmtHash(A.hashNow),cls:'acc',s:A.workers.length+' workerů • '+A.gpu+' GPU'},
+    {k:'Připravené odměny',v:fmt(A.pend.total_pending,2)+' <small>PRL</small>',cls:'acc',s:usd(A.pend.total_pending*p)+' čeká na připsání'},
+    {k:'Celkem vytěženo',v:fmt(A.totalMined,2)+' <small>PRL</small>',cls:'',s:usd(A.totalMined*p)+' (v záznamech)'},
+    {k:'Celkem vyplaceno',v:fmt(A.totalPaid,2)+' <small>PRL</small>',cls:'',s:usd(A.totalPaid*p)},
+  ];
+  document.getElementById('strip').innerHTML=strip.map(c=>
+    `<div class="card"><div class="k">${c.k}</div><div class="v ${c.cls}">${c.v}</div><div class="s">${c.s}</div></div>`).join('');
+
+  // daily chart – dle zvoleného období
+  const prl=selKeys.map(d=>A.days[d].prl);
+  const usdA=prl.map(v=>v*p);
+  const colors=selKeys.map(d=>d===todayKey?'#ffd16655':'#ffd166cc');
+  makeDaily(selKeys.map(d=>d.slice(8,10)+'.'+d.slice(5,7)+'.'),prl,usdA,colors);
+  const selSum=prl.reduce((s,v)=>s+v,0);
+  document.getElementById('rangeLbl').textContent=
+    rangeMode==='all'?`(celá doba — ${A.dayKeys.length} dní)`:`(posledních ${rangeMode} dní)`;
+  document.getElementById('dailySum').innerHTML=
+    `Σ <b style="color:var(--gold)">${fmt(selSum,2)} PRL</b> ≈ <b style="color:var(--usd)">${usd(selSum*p)}</b> `+
+    `za zobrazené období (${selKeys.length} dní) • průměr ${fmt(selSum/(selKeys.length||1),2)} PRL/den`;
+  // aktivní chip
+  document.querySelectorAll('#rangeChips button').forEach(b=>
+    b.classList.toggle('active', b.dataset.r===String(rangeMode)));
+
+  // hourly 48h
+  const hk=Object.keys(A.hours).sort().slice(-48);
+  makeBars('hourlyChart',hk.map(h=>h.slice(8,10)+'.'+' '+h.slice(11)+'h'),hk.map(h=>A.hours[h]),'#6ea8ff');
+
+  // pending
+  const pe=A.pend.epochs||[];
+  makeBars('pendingChart',pe.map(e=>e.epoch_label.slice(11,16)),pe.map(e=>e.amount),'#ffd166');
+
+  // daily table newest first
+  const tb=document.querySelector('#dailyTable tbody');
+  tb.innerHTML=selKeys.slice().reverse().map(d=>{
+    const x=A.days[d];
+    const cls=d===ydayKey?'yday':(d===todayKey?'today':'');
+    const tag=d===ydayKey?'<span class="tag"> včera</span>':(d===todayKey?'<span class="tag"> dnes</span>':'');
+    const part=(d===todayKey||x.epochs<24)?`<span class="tag"> ${x.epochs}/24</span>`:'';
+    return `<tr class="${cls}"><td>${dateLabel(d)}${tag}</td><td>${part}</td>
+      <td>${x.epochs||'—'}</td><td>${fmt(x.prl,3)}</td><td>${usd(x.prl*p)}</td>
+      <td>${x.epochs?fmt(x.prl/x.epochs,3):'—'}</td>
+      <td class="neg">${x.paid?fmt(x.paid,3):'—'}</td></tr>`;
+  }).join('');
+
+  // workers
+  document.getElementById('hashNow').textContent=`Celkem ${fmtHash(A.hashNow)} • ${A.gpu} GPU • ${A.workers.length} rigů`;
+  document.querySelector('#workerTable tbody').innerHTML=A.workers.map((w,i)=>{
+    let wh=0;(w.gpu_info||[]).forEach(g=>wh+=g.hashrate);
+    const gpus=(w.gpu_info||[]).map(g=>g.name.replace('NVIDIA GeForce ','')).join(', ');
+    return `<tr><td>#${i+1}</td><td>${(w.version||'').replace('WildRig_','WildRig ')}</td>
+      <td>${(w.gpu_info||[]).length}× <span style="color:var(--muted)">${gpus}</span></td>
+      <td>${fmtHash(wh)}</td></tr>`;
+  }).join('');
+
+  // badge + footer
+  const b=document.getElementById('srcBadge');
+  if(meta.err){b.className='badge err';b.textContent='● CHYBA NAČTENÍ';}
+  else if(meta.live){b.className='badge live';b.textContent='● ŽIVÁ DATA';}
+  else{b.className='badge snap';b.textContent='● SNAPSHOT '+SNAPSHOT.asOf.slice(0,16).replace('T',' ')+' UTC';}
+  document.getElementById('foot').innerHTML=
+    `Účet: <a href="https://pearlhash.xyz/account/${account}" target="_blank">${account}</a><br>`+
+    `Aktualizováno: ${now.toLocaleString('cs-CZ')} • cena PRL: ${meta.priceSrc||'ručně'} (přepiš nahoře) • `+
+    `data: pearlhash.xyz API, dny jsou v UTC. ${meta.note||''}`;
+}
+
+/* charts */
+const baseOpts={responsive:true,maintainAspectRatio:false,
+  plugins:{legend:{labels:{color:'#9aa6c4',boxWidth:12}}},
+  scales:{x:{ticks:{color:'#9aa6c4',maxRotation:0,autoSkip:true},grid:{color:'#1b2440'}},
+          y:{ticks:{color:'#9aa6c4'},grid:{color:'#1b2440'}}}};
+const kill=id=>{if(charts[id])charts[id].destroy();};
+const usdPointLabels={id:'usdPointLabels',afterDatasetsDraw(c){
+  const meta=c.getDatasetMeta(1); if(!meta||meta.hidden) return;
+  const data=c.data.datasets[1].data, n=data.length, step=n>22?2:1;
+  const ctx=c.ctx; ctx.save(); ctx.textAlign='center';
+  ctx.font='700 10px -apple-system,BlinkMacSystemFont,sans-serif'; ctx.fillStyle='#7ef0c4';
+  meta.data.forEach((pt,i)=>{ if(i%step||pt.y==null) return;
+    ctx.fillText('$'+Math.round(data[i]), pt.x, pt.y-9); });
+  ctx.restore();
+}};
+function makeDaily(labels,prl,usdVals,colors){kill('dailyChart');
+  charts.dailyChart=new Chart(document.getElementById('dailyChart'),{
+    data:{labels,datasets:[
+      {type:'bar',label:'PRL / den',data:prl,backgroundColor:colors,
+        borderRadius:6,maxBarThickness:46,yAxisID:'y',order:2},
+      {type:'line',label:'USD / den',data:usdVals,borderColor:'#34d399',
+        backgroundColor:'#34d39922',fill:true,tension:.35,borderWidth:2,
+        pointRadius:2,pointHoverRadius:5,pointBackgroundColor:'#34d399',yAxisID:'y1',order:1}
+    ]},
+    options:{...baseOpts,interaction:{mode:'index',intersect:false},
+      layout:{padding:{top:18}},
+      plugins:{legend:{labels:{color:'#9aa6c4',boxWidth:12,usePointStyle:true}},
+        tooltip:{callbacks:{label:it=> it.dataset.yAxisID==='y'
+          ? '  '+fmt(it.raw,3)+' PRL' : '  '+usd(it.raw)}}},
+      scales:{x:{...baseOpts.scales.x,grid:{display:false}},
+        y:{...baseOpts.scales.y,beginAtZero:true,position:'left',
+          title:{display:true,text:'PRL',color:'#ffd166'}},
+        y1:{...baseOpts.scales.y,beginAtZero:true,position:'right',grid:{drawOnChartArea:false},
+          title:{display:true,text:'USD',color:'#34d399'}}}},
+    plugins:[usdPointLabels]});
+}
+function makeBars(id,labels,data,color){kill(id);
+  charts[id]=new Chart(document.getElementById(id),{type:'bar',
+    data:{labels,datasets:[{data,backgroundColor:color+'cc',borderRadius:3}]},
+    options:{...baseOpts,plugins:{legend:{display:false}}}});
+}
+
+/* data load */
+async function loadPrice(){
+  try{const r=await fetch(PRICE_API,{cache:'no-store'});const j=await r.json();
+    const p=j['pearl-2']&&j['pearl-2'].usd;
+    if(p){document.getElementById('price').value=p;document.getElementById('priceSrc').textContent='(CoinGecko)';return 'CoinGecko (živě)';}
+  }catch(e){}
+  document.getElementById('priceSrc').textContent='(záloha)'; return 'záloha ~$0.66';
+}
+async function fetchJSON(url,ms=10000){
+  const ctl=new AbortController(); const t=setTimeout(()=>ctl.abort(),ms);
+  try{
+    const r=await fetch(url,{cache:'no-store',signal:ctl.signal});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return await r.json();
+  } finally { clearTimeout(t); }
+}
+// Paralelní race — všechny zdroje se spustí najednou, vrátí se první funkční.
+async function fetchAccount(a){
+  const target=apiUrl(a);
+  const ok=d=>d&&Array.isArray(d.balance_transactions);
+
+  const attempts=[
+    fetchJSON(target,7000).then(d=>{ if(!ok(d)) throw new Error('bad'); return {data:d,via:'přímo'}; }),
+    fetchJSON('https://api.allorigins.win/raw?url='+encodeURIComponent(target),9000)
+      .then(d=>{ if(!ok(d)) throw new Error('bad'); return {data:d,via:'proxy'}; }),
+    fetchJSON('https://api.allorigins.win/get?url='+encodeURIComponent(target),9000)
+      .then(w=>{ const d=JSON.parse(w.contents); if(!ok(d)) throw new Error('bad'); return {data:d,via:'proxy'}; }),
+    fetchJSON('https://corsproxy.io/?url='+encodeURIComponent(target),9000)
+      .then(d=>{ if(!ok(d)) throw new Error('bad'); return {data:d,via:'proxy'}; }),
+  ];
+
+  return new Promise((resolve,reject)=>{
+    let failed=0;
+    for(const p of attempts){
+      p.then(resolve).catch(()=>{ if(++failed===attempts.length) reject(new Error('nedostupné (přímo i přes proxy)')); });
+    }
+  });
+}
+async function loadData(){
+  const btn=document.getElementById('refresh');btn.disabled=true;btn.textContent='Načítám…';
+  document.getElementById('addrInput').value=account;
+  const priceSrc=await loadPrice();
+  let data,meta={priceSrc};
+  try{
+    const res=await fetchAccount(account);
+    data=res.data; meta.live=true;
+    if(res.via==='proxy') meta.note='(načteno přes CORS proxy)';
+  }catch(e){
+    data={balance_transactions:[],connected_workers:[],pending_rewards:{total_pending:0,epochs:[]}};
+    meta.err=true;meta.note='Načtení selhalo ('+e.message+'). Zkus to za chvíli — proxy občas vypadnou.';
+  }
+  render(data,meta);
+  btn.disabled=false;btn.textContent='↻ Obnovit';
+}
+function setAccount(a){
+  a=(a||'').trim(); if(!a) return;
+  account=a; try{localStorage.setItem('prl_account',a);}catch(e){}
+  loadData();
+}
+
+/* export */
+function exportRows(){
+  if(!lastAgg) return [];
+  const p=price();
+  return selectKeys(lastAgg.dayKeys).map(d=>{
+    const x=lastAgg.days[d];
+    return {datum:d, den:DOW[new Date(d+'T12:00:00Z').getUTCDay()], epochy:x.epochs,
+      vytezeno_PRL:+x.prl.toFixed(6), hodnota_USD:+(x.prl*p).toFixed(4),
+      kurz_PRL_USD:p, vyplaceno_PRL:+x.paid.toFixed(6)};
+  });
+}
+function download(name,text,type){
+  const b=new Blob([text],{type:type+';charset=utf-8'});
+  const u=URL.createObjectURL(b); const a=document.createElement('a');
+  a.href=u; a.download=name; document.body.appendChild(a); a.click();
+  a.remove(); URL.revokeObjectURL(u);
+}
+function rangeTag(){ return rangeMode==='all'?'vse':rangeMode+'d'; }
+function fname(ext){ return `pearl_denni_vydelky_${account.slice(0,10)}_${rangeTag()}_${new Date().toISOString().slice(0,10)}.${ext}`; }
+function exportCSV(){
+  const rows=exportRows(); if(!rows.length) return;
+  const head=['Datum(UTC)','Den','Epochy(z 24)','Vyteceno_PRL','Hodnota_USD','Kurz_PRL_USD','Vyplaceno_PRL'];
+  const lines=[head.join(';')];
+  for(const r of rows) lines.push([r.datum,r.den,r.epochy,r.vytezeno_PRL,r.hodnota_USD,r.kurz_PRL_USD,r.vyplaceno_PRL].join(';'));
+  download(fname('csv'), '﻿'+lines.join('\r\n'), 'text/csv');
+}
+function exportJSON(){
+  const rows=exportRows(); if(!rows.length) return;
+  const out={account, generated:new Date().toISOString(), price_PRL_USD:price(),
+    range:rangeMode==='all'?'all':rangeMode+'d', days:rows.length, rows};
+  download(fname('json'), JSON.stringify(out,null,2), 'application/json');
+}
+function setRange(r){
+  rangeMode = r==='all'?'all':parseInt(r);
+  try{localStorage.setItem('prl_range', String(rangeMode));}catch(e){}
+  if(lastData) render(lastData,lastMeta);
+}
+
+document.getElementById('addrInput').value=account;
+document.getElementById('loadBtn').addEventListener('click',()=>setAccount(document.getElementById('addrInput').value));
+document.getElementById('addrInput').addEventListener('keydown',e=>{if(e.key==='Enter')setAccount(e.target.value);});
+document.getElementById('refresh').addEventListener('click',loadData);
+document.getElementById('price').addEventListener('change',()=>{if(lastData)render(lastData,lastMeta);});
+document.getElementById('rangeChips').addEventListener('click',e=>{const b=e.target.closest('button');if(b)setRange(b.dataset.r);});
+document.getElementById('expCsv').addEventListener('click',exportCSV);
+document.getElementById('expJson').addEventListener('click',exportJSON);
+loadData();
+</script>
+</body>
+</html>
