@@ -366,27 +366,20 @@ async function fetchJSON(url,ms=10000){
     return await r.json();
   } finally { clearTimeout(t); }
 }
-// Paralelní race — všechny zdroje se spustí najednou, vrátí se první funkční.
+// Načte data.json z GitHub Pages (aktualizováno GitHub Actions každých 5 minut)
 async function fetchAccount(a){
-  const target=apiUrl(a);
   const ok=d=>d&&Array.isArray(d.balance_transactions);
-
-  const attempts=[
-    fetchJSON(target,7000).then(d=>{ if(!ok(d)) throw new Error('bad'); return {data:d,via:'přímo'}; }),
-    fetchJSON('https://api.allorigins.win/raw?url='+encodeURIComponent(target),9000)
-      .then(d=>{ if(!ok(d)) throw new Error('bad'); return {data:d,via:'proxy'}; }),
-    fetchJSON('https://api.allorigins.win/get?url='+encodeURIComponent(target),9000)
-      .then(w=>{ const d=JSON.parse(w.contents); if(!ok(d)) throw new Error('bad'); return {data:d,via:'proxy'}; }),
-    fetchJSON('https://corsproxy.io/?url='+encodeURIComponent(target),9000)
-      .then(d=>{ if(!ok(d)) throw new Error('bad'); return {data:d,via:'proxy'}; }),
-  ];
-
-  return new Promise((resolve,reject)=>{
-    let failed=0;
-    for(const p of attempts){
-      p.then(resolve).catch(()=>{ if(++failed===attempts.length) reject(new Error('nedostupné (přímo i přes proxy)')); });
-    }
-  });
+  // Zkusí data.json vedle HTML souboru (GitHub Actions)
+  try{
+    const d=await fetchJSON('./data.json',8000);
+    if(ok(d)) return {data:d,via:'živě'};
+  }catch(e){}
+  // Záloha: přímo z API (funguje jen pokud server posílá CORS hlavičky)
+  try{
+    const d=await fetchJSON(apiUrl(a),7000);
+    if(ok(d)) return {data:d,via:'živě'};
+  }catch(e){}
+  throw new Error('data.json nenalezen — zkontroluj GitHub Actions');
 }
 async function loadData(){
   const btn=document.getElementById('refresh');btn.disabled=true;btn.textContent='Načítám…';
