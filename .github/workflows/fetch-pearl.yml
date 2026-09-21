@@ -18,11 +18,14 @@ jobs:
       - name: Stáhnout data z pearlhash API
         run: |
           HTTP_CODE=$(curl -s -o data.json -w "%{http_code}" \
+            -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36" \
+            -H "Accept: application/json" \
+            -H "Referer: https://pearlhash.xyz/" \
             "https://pearlhash.xyz/api/account/prl1pzdky20xjrduj08apwl4xke3fsjfkleaujx754d6jrpks9zgr5q4q97s0uy")
           echo "HTTP status: $HTTP_CODE"
           echo "Velikost souboru: $(wc -c < data.json) bytů"
-          echo "Prvních 200 znaků:"
-          head -c 200 data.json
+          echo "Prvních 300 znaků:"
+          head -c 300 data.json
           if [ "$HTTP_CODE" != "200" ]; then
             echo "CHYBA: API vrátilo HTTP $HTTP_CODE"
             exit 1
