@@ -2,8 +2,8 @@ name: Fetch Pearl data
 
 on:
   schedule:
-    - cron: '*/5 * * * *'   # každých 5 minut
-  workflow_dispatch:          # možnost spustit ručně
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
 
 jobs:
   fetch:
@@ -17,10 +17,16 @@ jobs:
 
       - name: Stáhnout data z pearlhash API
         run: |
-          curl -sf \
-            "https://pearlhash.xyz/api/account/prl1pzdky20xjrduj08apwl4xke3fsjfkleaujx754d6jrpks9zgr5q4q97s0uy" \
-            -o data.json
-          echo "Staženo $(wc -c < data.json) bytů"
+          HTTP_CODE=$(curl -s -o data.json -w "%{http_code}" \
+            "https://pearlhash.xyz/api/account/prl1pzdky20xjrduj08apwl4xke3fsjfkleaujx754d6jrpks9zgr5q4q97s0uy")
+          echo "HTTP status: $HTTP_CODE"
+          echo "Velikost souboru: $(wc -c < data.json) bytů"
+          echo "Prvních 200 znaků:"
+          head -c 200 data.json
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "CHYBA: API vrátilo HTTP $HTTP_CODE"
+            exit 1
+          fi
 
       - name: Commitnout data.json pokud se změnil
         run: |
