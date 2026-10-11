@@ -79,6 +79,8 @@
   .tablewrap{max-height:360px;overflow:auto;border-radius:10px}
   .pos{color:var(--good)} .neg{color:var(--bad)} .tag{font-size:10.5px;color:var(--muted);font-weight:600}
 
+  .pin{width:78px;background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:6px;padding:3px 5px;font-size:12.5px;text-align:right}
+  .pin.man{border-color:var(--gold)}
   footer{color:var(--muted);font-size:11.5px;margin-top:24px;line-height:1.6}
   a{color:var(--accent)}
 </style>
@@ -96,8 +98,10 @@
         <input id="addrInput" placeholder="prl1… vlož adresu účtu" spellcheck="false">
         <button id="loadBtn">Načíst</button>
       </div>
-      <div class="field price">PRL/USD&nbsp;$<input id="price" type="number" step="0.0001" value="0.66">
-        <span id="priceSrc" style="font-size:11px"></span></div>
+      <div class="field price">PRL dnes $<input id="price" type="number" step="0.0001" value="0.66"><span id="priceSrc" style="font-size:11px"></span></div>
+      <div class="field price">Odběr<input id="watts" type="number" step="10" placeholder="0">W</div>
+      <div class="field price">Elektřina<input id="kwh" type="number" step="0.01" placeholder="0">Kč/kWh</div>
+      <div class="field price">Kurz<input id="czk" type="number" step="0.01">Kč/USD</div>
       <button id="refresh" class="ghost">↻ Obnovit</button>
     </div>
   </header>
@@ -136,19 +140,8 @@
       <div class="hint">Kolik jsi vytěžil každý den — nejnovější nahoře</div></div></div>
     <div class="tablewrap">
       <table id="dailyTable"><thead><tr>
-        <th>Den</th><th></th><th>Epochy</th><th>Vytěženo PRL</th><th>Hodnota USD</th><th>Ø / hodina</th><th>Vyplaceno</th>
+        <th>Den</th><th></th><th>Epochy</th><th>Vytěženo PRL</th><th>Kurz $</th><th>Hodnota USD</th><th>Hodnota CZK</th><th>Elektřina</th><th>Čistý zisk</th><th>Vyplaceno PRL</th>
       </tr></thead><tbody></tbody></table>
-    </div>
-  </div>
-
-  <div class="grid twocol">
-    <div class="panel">
-      <div class="ph"><div><h2>Posledních 48 hodin</h2><div class="hint">Vytěžení po hodinách (PRL)</div></div></div>
-      <div class="chartbox sm"><canvas id="hourlyChart"></canvas></div>
-    </div>
-    <div class="panel">
-      <div class="ph"><div><h2>Připravené odměny</h2><div class="hint">Epochy ještě nepřipsané na zůstatek</div></div></div>
-      <div class="chartbox sm"><canvas id="pendingChart"></canvas></div>
     </div>
   </div>
 
@@ -167,6 +160,7 @@
 <script>
 const DEFAULT_ACCOUNT = "prl1pzdky20xjrduj08apwl4xke3fsjfkleaujx754d6jrpks9zgr5q4q97s0uy";
 const apiUrl = a => "https://pearlhash.xyz/api/account/" + a;
+const HIST_API = "https://api.coingecko.com/api/v3/coins/pearl-2/market_chart?vs_currency=usd&days=90";
 const PRICE_API = "https://api.coingecko.com/api/v3/simple/price?ids=pearl-2&vs_currencies=usd";
 
 // Vestavěný snapshot (záloha při CORS bloku) — platí jen pro výchozí účet
@@ -185,6 +179,27 @@ const price=()=>parseFloat(document.getElementById('price').value)||0;
 function fmtHash(h){const u=['H/s','kH/s','MH/s','GH/s','TH/s','PH/s','EH/s'];let i=0,v=h;
   while(v>=1000&&i<u.length-1){v/=1000;i++;}return fmt(v,v<10?2:1)+' '+u[i];}
 function dateLabel(d){const dt=new Date(d+'T12:00:00Z');return DOW[dt.getUTCDay()]+' '+d.slice(8,10)+'.'+d.slice(5,7)+'.';}
+
+/* ceny po dnech + nastavení elektřiny (ukládá se v prohlížeči) */
+const LS=(k,d)=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):d;}catch(e){return d;}};
+const SV=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}};
+const priceHist=LS('prl_price_hist',{}), priceManual=LS('prl_price_manual',{});
+const cfg=Object.assign({watts:0,kwh:0,czk:21.5},LS('prl_cfg',{}));
+const todayStr=()=>new Date().toISOString().slice(0,10);
+const costDay=()=>cfg.watts/1000*24*cfg.kwh;
+function priceFor(d){
+  const all={...priceHist,...priceManual};
+  if(all[d]>0) return all[d];
+  const ks=Object.keys(all).filter(k=>all[k]>0).sort();
+  let b=null; for(const k of ks){ if(k<=d) b=k; }
+  if(!b) b=ks.find(k=>k>d);
+  return b?all[b]:price();
+}
+function dayCalc(d,x,isToday){
+  const pr=priceFor(d), usdV=x.prl*pr, czkV=usdV*cfg.czk;
+  const cost=costDay()*(isToday?Math.min(x.epochs,24)/24:1);
+  return {pr,usdV,czkV,cost,net:czkV-cost};
+}
 
 function aggregate(data){
   const tx=data.balance_transactions||[];
@@ -209,81 +224,82 @@ function aggregate(data){
 
 function render(data,meta){
   lastData=data; lastMeta=meta;
-  const A=aggregate(data), p=price(); lastAgg=A;
+  const A=aggregate(data); lastAgg=A;
   const selKeys=selectKeys(A.dayKeys);
   const now=new Date();
   const todayKey=now.toISOString().slice(0,10);
   const ydayKey=new Date(now.getTime()-86400000).toISOString().slice(0,10);
-  const dY=A.days[ydayKey]||{prl:0,epochs:0,paid:0};
-  const dT=A.days[todayKey]||{prl:0,epochs:0,paid:0};
+  const E0={prl:0,epochs:0,paid:0};
+  const dY=A.days[ydayKey]||E0, dT=A.days[todayKey]||E0;
+  const cY=dayCalc(ydayKey,dY,false), cT=dayCalc(todayKey,dT,true);
+  const C={}; A.dayKeys.forEach(d=>C[d]=dayCalc(d,A.days[d],d===todayKey));
+  const Kc=n=>fmt(n,0)+' Kč', Uc=n=>usd(n/(cfg.czk||1)), sgn=n=>n>=0?'pos':'neg';
+  const sum=(arr,f)=>arr.reduce((s,d)=>s+f(d),0);
 
-  // VČERA (hlavní)
+  // VČERA
   document.getElementById('cardYday').innerHTML=
     `<div class="k">Včera vytěženo · ${dateLabel(ydayKey)}</div>
      <div class="v gold">${fmt(dY.prl,2)} <small>PRL</small></div>
-     <div class="u">${usd(dY.prl*p)}</div>
-     <div class="s">${dY.epochs}/24 hodin připsáno${dY.epochs<24&&dY.epochs>0?' (neúplné)':''}</div>`;
+     <div class="u">${usd(cY.usdV)} · ${Kc(cY.czkV)}</div>
+     <div class="s">kurz ${fmt(cY.pr,4)} $ • čistý zisk <b class="${sgn(cY.net)}">${Kc(cY.net)}</b> (${Uc(cY.net)}) • ${dY.epochs}/24 h${dY.epochs<24&&dY.epochs>0?' (neúplné)':''}</div>`;
 
   // DNES zatím + odhad
   const est=dT.epochs?dT.prl/dT.epochs*24:0;
   document.getElementById('cardToday').innerHTML=
     `<div class="k">Dnes zatím · ${dateLabel(todayKey)}</div>
      <div class="v gold">${fmt(dT.prl,2)} <small>PRL</small></div>
-     <div class="u">${usd(dT.prl*p)}</div>
-     <div class="s">${dT.epochs}/24 h • odhad celý den ~${fmt(est,1)} PRL (${usd(est*p)})</div>`;
+     <div class="u">${usd(cT.usdV)} · ${Kc(cT.czkV)}</div>
+     <div class="s">kurz ${fmt(cT.pr,4)} $ • čistý zisk zatím <b class="${sgn(cT.net)}">${Kc(cT.net)}</b> • ${dT.epochs}/24 h • odhad dne ~${fmt(est,1)} PRL (${usd(est*cT.pr)})</div>`;
 
-  // průměr za posledních 7 ÚPLNÝCH dní (bez dneška)
-  const full=A.dayKeys.filter(d=>d!==todayKey).slice(-7);
-  const avg=full.length?full.reduce((s,d)=>s+A.days[d].prl,0)/full.length:0;
+  // průměr za posledních 7 ÚPLNÝCH dní, každý den svou cenou
+  const full=A.dayKeys.filter(d=>d!==todayKey).slice(-7), n=full.length||1;
+  const avg=sum(full,d=>A.days[d].prl)/n, avgUsd=sum(full,d=>C[d].usdV)/n, avgCzk=sum(full,d=>C[d].czkV)/n;
+  const avgNet=avgCzk-costDay();
   document.getElementById('cardAvg').innerHTML=
     `<div class="k">Ø za den (${full.length} dní)</div>
      <div class="v gold">${fmt(avg,2)} <small>PRL</small></div>
-     <div class="u">${usd(avg*p)} / den</div>
-     <div class="s">klouzavý průměr úplných dní</div>`;
+     <div class="u">${usd(avgUsd)} · ${Kc(avgCzk)} / den</div>
+     <div class="s">klouzavý průměr úplných dní, každý den svou cenou</div>`;
 
-  // strip
+  // celkem (každý den svou cenou)
+  const tUsd=sum(A.dayKeys,d=>C[d].usdV), pUsd=sum(A.dayKeys,d=>A.days[d].paid*priceFor(d));
+  const cd=costDay(), hasCfg=cfg.watts>0&&cfg.kwh>0;
   const strip=[
     {k:'Aktuální hashrate',v:fmtHash(A.hashNow),cls:'acc',s:A.workers.length+' workerů • '+A.gpu+' GPU'},
-    {k:'Připravené odměny',v:fmt(A.pend.total_pending,2)+' <small>PRL</small>',cls:'acc',s:usd(A.pend.total_pending*p)+' čeká na připsání'},
-    {k:'Celkem vytěženo',v:fmt(A.totalMined,2)+' <small>PRL</small>',cls:'',s:usd(A.totalMined*p)+' (v záznamech)'},
-    {k:'Celkem vyplaceno',v:fmt(A.totalPaid,2)+' <small>PRL</small>',cls:'',s:usd(A.totalPaid*p)},
+    {k:'Elektřina / den',v:Kc(cd),cls:'neg',u:Uc(cd),s:hasCfg?`${fmt(cfg.watts,0)} W • ${fmt(cfg.watts*24/1000,1)} kWh • ${fmt(cfg.kwh,2)} Kč/kWh`:'vyplň odběr a cenu nahoře'},
+    {k:'Čistý zisk / den',v:Kc(avgNet),cls:sgn(avgNet),u:Uc(avgNet),s:'Ø 7 dní − elektřina'},
+    {k:'Projekce týden',v:Kc(avgNet*7),cls:sgn(avgNet),u:Uc(avgNet*7),s:'čistý zisk × 7'},
+    {k:'Projekce měsíc',v:Kc(avgNet*30),cls:sgn(avgNet),u:Uc(avgNet*30),s:'čistý zisk × 30'},
+    {k:'Celkem vytěženo',v:fmt(A.totalMined,2)+' <small>PRL</small>',cls:'',u:usd(tUsd),s:Kc(tUsd*cfg.czk)+' (denní ceny)'},
+    {k:'Celkem vyplaceno',v:fmt(A.totalPaid,2)+' <small>PRL</small>',cls:'',u:usd(pUsd),s:Kc(pUsd*cfg.czk)+' (denní ceny)'},
   ];
   document.getElementById('strip').innerHTML=strip.map(c=>
-    `<div class="card"><div class="k">${c.k}</div><div class="v ${c.cls}">${c.v}</div><div class="s">${c.s}</div></div>`).join('');
+    `<div class="card"><div class="k">${c.k}</div><div class="v ${c.cls}">${c.v}</div>${c.u?`<div class="u">${c.u}</div>`:''}<div class="s">${c.s}</div></div>`).join('');
 
-  // daily chart – dle zvoleného období
-  const prl=selKeys.map(d=>A.days[d].prl);
-  const usdA=prl.map(v=>v*p);
+  // daily chart
+  const prl=selKeys.map(d=>A.days[d].prl), usdA=selKeys.map(d=>C[d].usdV);
   const colors=selKeys.map(d=>d===todayKey?'#ffd16655':'#ffd166cc');
   makeDaily(selKeys.map(d=>d.slice(8,10)+'.'+d.slice(5,7)+'.'),prl,usdA,colors);
-  const selSum=prl.reduce((s,v)=>s+v,0);
+  const sPrl=sum(prl,v=>v), sUsd=sum(usdA,v=>v), sCzk=sum(selKeys,d=>C[d].czkV), sCost=sum(selKeys,d=>C[d].cost), sNet=sCzk-sCost;
   document.getElementById('rangeLbl').textContent=
     rangeMode==='all'?`(celá doba — ${A.dayKeys.length} dní)`:`(posledních ${rangeMode} dní)`;
   document.getElementById('dailySum').innerHTML=
-    `Σ <b style="color:var(--gold)">${fmt(selSum,2)} PRL</b> ≈ <b style="color:var(--usd)">${usd(selSum*p)}</b> `+
-    `za zobrazené období (${selKeys.length} dní) • průměr ${fmt(selSum/(selKeys.length||1),2)} PRL/den`;
-  // aktivní chip
+    `Σ <b style="color:var(--gold)">${fmt(sPrl,2)} PRL</b> ≈ <b style="color:var(--usd)">${usd(sUsd)}</b> ≈ ${Kc(sCzk)} • elektřina −${Kc(sCost)} • `+
+    `čistý zisk <b class="${sgn(sNet)}">${Kc(sNet)}</b> (${Uc(sNet)}) • ${selKeys.length} dní, průměr ${fmt(sPrl/(selKeys.length||1),2)} PRL/den`;
   document.querySelectorAll('#rangeChips button').forEach(b=>
     b.classList.toggle('active', b.dataset.r===String(rangeMode)));
 
-  // hourly 48h
-  const hk=Object.keys(A.hours).sort().slice(-48);
-  makeBars('hourlyChart',hk.map(h=>h.slice(8,10)+'.'+' '+h.slice(11)+'h'),hk.map(h=>A.hours[h]),'#6ea8ff');
-
-  // pending
-  const pe=A.pend.epochs||[];
-  makeBars('pendingChart',pe.map(e=>e.epoch_label.slice(11,16)),pe.map(e=>e.amount),'#ffd166');
-
   // daily table newest first
-  const tb=document.querySelector('#dailyTable tbody');
-  tb.innerHTML=selKeys.slice().reverse().map(d=>{
-    const x=A.days[d];
+  document.querySelector('#dailyTable tbody').innerHTML=selKeys.slice().reverse().map(d=>{
+    const x=A.days[d], c=C[d];
     const cls=d===ydayKey?'yday':(d===todayKey?'today':'');
     const tag=d===ydayKey?'<span class="tag"> včera</span>':(d===todayKey?'<span class="tag"> dnes</span>':'');
     const part=(d===todayKey||x.epochs<24)?`<span class="tag"> ${x.epochs}/24</span>`:'';
     return `<tr class="${cls}"><td>${dateLabel(d)}${tag}</td><td>${part}</td>
-      <td>${x.epochs||'—'}</td><td>${fmt(x.prl,3)}</td><td>${usd(x.prl*p)}</td>
-      <td>${x.epochs?fmt(x.prl/x.epochs,3):'—'}</td>
+      <td>${x.epochs||'—'}</td><td>${fmt(x.prl,3)}</td>
+      <td><input class="pin${priceManual[d]>0?' man':''}" type="number" step="0.0001" data-d="${d}" value="${c.pr.toFixed(4)}"></td>
+      <td>${usd(c.usdV)}</td><td>${Kc(c.czkV)}</td><td>${Kc(c.cost)}</td>
+      <td class="${sgn(c.net)}">${Kc(c.net)} <span class="tag">(${Uc(c.net)})</span></td>
       <td class="neg">${x.paid?fmt(x.paid,3):'—'}</td></tr>`;
   }).join('');
 
@@ -304,7 +320,7 @@ function render(data,meta){
   else{b.className='badge snap';b.textContent='● SNAPSHOT '+SNAPSHOT.asOf.slice(0,16).replace('T',' ')+' UTC';}
   document.getElementById('foot').innerHTML=
     `Účet: <a href="https://pearlhash.xyz/account/${account}" target="_blank">${account}</a><br>`+
-    `Aktualizováno: ${now.toLocaleString('cs-CZ')} • cena PRL: ${meta.priceSrc||'ručně'} (přepiš nahoře) • `+
+    `Aktualizováno: ${now.toLocaleString('cs-CZ')} • cena PRL: ${meta.priceSrc||'ručně'} • denní ceny se ukládají v prohlížeči (zlatě = ručně upraveno) • `+
     `data: pearlhash.xyz API, dny jsou v UTC. ${meta.note||''}`;
 }
 
@@ -344,19 +360,23 @@ function makeDaily(labels,prl,usdVals,colors){kill('dailyChart');
           title:{display:true,text:'USD',color:'#34d399'}}}},
     plugins:[usdPointLabels]});
 }
-function makeBars(id,labels,data,color){kill(id);
-  charts[id]=new Chart(document.getElementById(id),{type:'bar',
-    data:{labels,datasets:[{data,backgroundColor:color+'cc',borderRadius:3}]},
-    options:{...baseOpts,plugins:{legend:{display:false}}}});
-}
-
 /* data load */
 async function loadPrice(){
+  const t=todayStr(); let src='záloha';
   try{const r=await fetch(PRICE_API,{cache:'no-store'});const j=await r.json();
     const p=j['pearl-2']&&j['pearl-2'].usd;
-    if(p){document.getElementById('price').value=p;document.getElementById('priceSrc').textContent='(CoinGecko)';return 'CoinGecko (živě)';}
+    if(p){priceHist[t]=p;src='CoinGecko (živě)';}
   }catch(e){}
-  document.getElementById('priceSrc').textContent='(záloha)'; return 'záloha ~$0.66';
+  try{ // dopočítá chybějící dny: průměr z hodinových cen (CoinGecko, 90 dní)
+    const j=await fetchJSON(HIST_API,12000), acc={};
+    for(const [ts,pr] of (j.prices||[])){const d=new Date(ts).toISOString().slice(0,10);(acc[d]=acc[d]||[0,0]);acc[d][0]+=pr;acc[d][1]++;}
+    for(const d in acc) if(d!==t&&!(priceHist[d]>0)) priceHist[d]=acc[d][0]/acc[d][1];
+  }catch(e){}
+  SV('prl_price_hist',priceHist);
+  const cur=priceManual[t]||priceHist[t];
+  if(cur) document.getElementById('price').value=cur;
+  document.getElementById('priceSrc').textContent=priceManual[t]?'(ručně)':(priceHist[t]?'(CoinGecko)':'(záloha)');
+  return src==='záloha'&&priceHist[t]?'uložená cena':src;
 }
 async function fetchJSON(url,ms=10000){
   const ctl=new AbortController(); const t=setTimeout(()=>ctl.abort(),ms);
@@ -406,12 +426,13 @@ function setAccount(a){
 /* export */
 function exportRows(){
   if(!lastAgg) return [];
-  const p=price();
+  const tk=todayStr();
   return selectKeys(lastAgg.dayKeys).map(d=>{
-    const x=lastAgg.days[d];
+    const x=lastAgg.days[d], c=dayCalc(d,x,d===tk);
     return {datum:d, den:DOW[new Date(d+'T12:00:00Z').getUTCDay()], epochy:x.epochs,
-      vytezeno_PRL:+x.prl.toFixed(6), hodnota_USD:+(x.prl*p).toFixed(4),
-      kurz_PRL_USD:p, vyplaceno_PRL:+x.paid.toFixed(6)};
+      vytezeno_PRL:+x.prl.toFixed(6), kurz_PRL_USD:+c.pr.toFixed(6), hodnota_USD:+c.usdV.toFixed(4),
+      hodnota_CZK:+c.czkV.toFixed(2), elektrina_CZK:+c.cost.toFixed(2), cisty_zisk_CZK:+c.net.toFixed(2),
+      vyplaceno_PRL:+x.paid.toFixed(6)};
   });
 }
 function download(name,text,type){
@@ -424,14 +445,14 @@ function rangeTag(){ return rangeMode==='all'?'vse':rangeMode+'d'; }
 function fname(ext){ return `pearl_denni_vydelky_${account.slice(0,10)}_${rangeTag()}_${new Date().toISOString().slice(0,10)}.${ext}`; }
 function exportCSV(){
   const rows=exportRows(); if(!rows.length) return;
-  const head=['Datum(UTC)','Den','Epochy(z 24)','Vyteceno_PRL','Hodnota_USD','Kurz_PRL_USD','Vyplaceno_PRL'];
+  const head=['Datum(UTC)','Den','Epochy(z 24)','Vyteceno_PRL','Kurz_PRL_USD','Hodnota_USD','Hodnota_CZK','Elektrina_CZK','Cisty_zisk_CZK','Vyplaceno_PRL'];
   const lines=[head.join(';')];
-  for(const r of rows) lines.push([r.datum,r.den,r.epochy,r.vytezeno_PRL,r.hodnota_USD,r.kurz_PRL_USD,r.vyplaceno_PRL].join(';'));
-  download(fname('csv'), '﻿'+lines.join('\r\n'), 'text/csv');
+  for(const r of rows) lines.push([r.datum,r.den,r.epochy,r.vytezeno_PRL,r.kurz_PRL_USD,r.hodnota_USD,r.hodnota_CZK,r.elektrina_CZK,r.cisty_zisk_CZK,r.vyplaceno_PRL].join(';'));
+  download(fname('csv'), '\ufeff'+lines.join('\r\n'), 'text/csv');
 }
 function exportJSON(){
   const rows=exportRows(); if(!rows.length) return;
-  const out={account, generated:new Date().toISOString(), price_PRL_USD:price(),
+  const out={account, generated:new Date().toISOString(), kurz_CZK_USD:cfg.czk, elektrina:{watts:cfg.watts,kc_kwh:cfg.kwh},
     range:rangeMode==='all'?'all':rangeMode+'d', days:rows.length, rows};
   download(fname('json'), JSON.stringify(out,null,2), 'application/json');
 }
@@ -445,7 +466,17 @@ document.getElementById('addrInput').value=account;
 document.getElementById('loadBtn').addEventListener('click',()=>setAccount(document.getElementById('addrInput').value));
 document.getElementById('addrInput').addEventListener('keydown',e=>{if(e.key==='Enter')setAccount(e.target.value);});
 document.getElementById('refresh').addEventListener('click',loadData);
-document.getElementById('price').addEventListener('change',()=>{if(lastData)render(lastData,lastMeta);});
+const $=id=>document.getElementById(id);
+$('watts').value=cfg.watts||''; $('kwh').value=cfg.kwh||''; $('czk').value=cfg.czk||'';
+['watts','kwh','czk'].forEach(id=>$(id).addEventListener('change',()=>{
+  cfg.watts=parseFloat($('watts').value)||0; cfg.kwh=parseFloat($('kwh').value)||0; cfg.czk=parseFloat($('czk').value)||0;
+  SV('prl_cfg',cfg); if(lastData)render(lastData,lastMeta);}));
+function setManual(d,v){ if(v>0)priceManual[d]=v; else delete priceManual[d]; SV('prl_price_manual',priceManual); }
+$('price').addEventListener('change',e=>{setManual(todayStr(),parseFloat(e.target.value)); if(lastData)render(lastData,lastMeta);});
+$('dailyTable').addEventListener('change',e=>{const i=e.target.closest('.pin'); if(!i)return;
+  const d=i.dataset.d; setManual(d,parseFloat(i.value));
+  if(d===todayStr()) $('price').value=priceManual[d]||priceHist[d]||'';
+  if(lastData)render(lastData,lastMeta);});
 document.getElementById('rangeChips').addEventListener('click',e=>{const b=e.target.closest('button');if(b)setRange(b.dataset.r);});
 document.getElementById('expCsv').addEventListener('click',exportCSV);
 document.getElementById('expJson').addEventListener('click',exportJSON);
