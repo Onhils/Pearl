@@ -81,6 +81,10 @@
 
   .pin{width:78px;background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:6px;padding:3px 5px;font-size:12.5px;text-align:right}
   .pin.man{border-color:var(--gold)}
+  .meter{position:relative;height:10px;min-width:140px;background:var(--panel2);border-radius:6px;overflow:hidden}
+  .meter i{display:block;height:100%}
+  .meter i.ok{background:var(--good)} .meter i.bad{background:var(--bad)}
+  .meter:after{content:"";position:absolute;left:50%;top:0;bottom:0;width:2px;background:#fffa}
   footer{color:var(--muted);font-size:11.5px;margin-top:24px;line-height:1.6}
   a{color:var(--accent)}
 </style>
@@ -133,6 +137,17 @@
     </div>
     <div class="chartbox"><canvas id="dailyChart"></canvas></div>
     <div class="hint" id="dailySum" style="margin-top:10px"></div>
+  </div>
+
+  <div class="panel">
+    <div class="ph"><div><h2>Výnosnost těžby</h2>
+      <div class="hint">Revenue = hrubý příjem • násobek = revenue ÷ náklad • návratnost = čistý zisk ÷ náklad (+50 % = ×1,50, na každou korunu za elektřinu 1,50 Kč zpět) • marže = čistý zisk ÷ revenue • bílá čárka = break-even</div></div></div>
+    <div class="tablewrap"><table id="roiTable"><thead><tr>
+      <th>Období</th><th>Revenue</th><th>Náklad</th><th>Čistý zisk</th><th>Násobek</th><th>Návratnost</th><th>Marže</th><th></th>
+    </tr></thead><tbody></tbody></table></div>
+    <div class="hint" id="roiNote" style="margin:8px 0 12px"></div>
+    <div class="hint">Graf podle období 7 / 14 / 30 dní výše: sloupce = revenue (zeleně nad nákladem, červeně pod ním), čárkovaně náklad, zlatě návratnost v % (pravá osa)</div>
+    <div class="chartbox sm" style="margin-top:10px"><canvas id="roiChart"></canvas></div>
   </div>
 
   <div class="panel">
@@ -264,10 +279,16 @@ function render(data,meta){
   // celkem (každý den svou cenou)
   const tUsd=sum(A.dayKeys,d=>C[d].usdV), pUsd=sum(A.dayKeys,d=>A.days[d].paid*priceFor(d));
   const cd=costDay(), hasCfg=cfg.watts>0&&cfg.kwh>0;
+  // výnosnost (úplné dny, každý den svou cenou)
+  const fullAll=A.dayKeys.filter(d=>d!==todayKey);
+  const per=k=>({n:k.length,usd:sum(k,d=>C[d].usdV),rev:sum(k,d=>C[d].czkV),cost:sum(k,d=>C[d].cost)});
+  const P7=per(full), P30=per(fullAll.slice(-30)), PA=per(fullAll);
+  const roi7=P7.cost>0?(P7.rev-P7.cost)/P7.cost:null;
   const strip=[
     {k:'Aktuální hashrate',v:fmtHash(A.hashNow),cls:'acc',s:A.workers.length+' workerů • '+A.gpu+' GPU'},
     {k:'Elektřina / den',v:Kc(cd),cls:'neg',u:Uc(cd),s:hasCfg?`${fmt(cfg.watts,0)} W • ${fmt(cfg.watts*24/1000,1)} kWh • ${fmt(cfg.kwh,2)} Kč/kWh`:'vyplň odběr a cenu nahoře'},
     {k:'Čistý zisk / den',v:Kc(avgNet),cls:sgn(avgNet),u:Uc(avgNet),s:'Ø 7 dní − elektřina'},
+    {k:'Návratnost (7 dní)',v:roi7==null?'—':(roi7>=0?'+':'')+fmt(roi7*100,0)+' %',cls:roi7==null?'':sgn(roi7),u:roi7==null?'':'×'+fmt(1+roi7,2),s:'čistý zisk ÷ náklad'},
     {k:'Projekce týden',v:Kc(avgNet*7),cls:sgn(avgNet),u:Uc(avgNet*7),s:'čistý zisk × 7'},
     {k:'Projekce měsíc',v:Kc(avgNet*30),cls:sgn(avgNet),u:Uc(avgNet*30),s:'čistý zisk × 30'},
     {k:'Celkem vytěženo',v:fmt(A.totalMined,2)+' <small>PRL</small>',cls:'',u:usd(tUsd),s:Kc(tUsd*cfg.czk)+' (denní ceny)'},
@@ -288,6 +309,22 @@ function render(data,meta){
     `čistý zisk <b class="${sgn(sNet)}">${Kc(sNet)}</b> (${Uc(sNet)}) • ${selKeys.length} dní, průměr ${fmt(sPrl/(selKeys.length||1),2)} PRL/den`;
   document.querySelectorAll('#rangeChips button').forEach(b=>
     b.classList.toggle('active', b.dataset.r===String(rangeMode)));
+
+  // výnosnost: tabulka + graf
+  const rowH=(lbl,P)=>{const net=P.rev-P.cost,has=P.cost>0,m=has?P.rev/P.cost:0;
+    return `<tr><td>${lbl}</td><td>${Kc(P.rev)} <span class="tag">(${usd(P.usd)})</span></td>
+      <td>${Kc(P.cost)} <span class="tag">(${Uc(P.cost)})</span></td>
+      <td class="${sgn(net)}">${Kc(net)} <span class="tag">(${Uc(net)})</span></td>
+      <td>${has?'×'+fmt(m,2):'—'}</td>
+      <td class="${sgn(net)}">${has?(net>=0?'+':'')+fmt(net/P.cost*100,0)+' %':'—'}</td>
+      <td>${P.rev>0?fmt(net/P.rev*100,0)+' %':'—'}</td>
+      <td>${has?`<div class="meter"><i class="${m>=1?'ok':'bad'}" style="width:${Math.min(m,2)/2*100}%"></i></div>`:''}</td></tr>`;};
+  document.querySelector('#roiTable tbody').innerHTML=
+    rowH('Včera · '+dateLabel(ydayKey),{n:1,usd:cY.usdV,rev:cY.czkV,cost:cY.cost})+
+    rowH(`Posledních ${P7.n} dní`,P7)+rowH(`Posledních ${P30.n} dní`,P30)+rowH(`Celkem (${PA.n} dní)`,PA);
+  document.getElementById('roiNote').textContent=hasCfg?'Náklad = jen elektřina (odběr × 24 h × cena kWh) za úplné dny; bez dneška.':'Vyplň nahoře odběr (W) a cenu za kWh, jinak je náklad 0 a poměry se nedají spočítat.';
+  const revA=selKeys.map(d=>C[d].czkV), costA=selKeys.map(d=>C[d].cost);
+  makeRoi(selKeys.map(d=>d.slice(8,10)+'.'+d.slice(5,7)+'.'),revA,costA,costA.map((c,i)=>c>0?(revA[i]-c)/c*100:null));
 
   // daily table newest first
   document.querySelector('#dailyTable tbody').innerHTML=selKeys.slice().reverse().map(d=>{
@@ -359,6 +396,23 @@ function makeDaily(labels,prl,usdVals,colors){kill('dailyChart');
         y1:{...baseOpts.scales.y,beginAtZero:true,position:'right',grid:{drawOnChartArea:false},
           title:{display:true,text:'USD',color:'#34d399'}}}},
     plugins:[usdPointLabels]});
+}
+function makeRoi(labels,rev,cost,roi){kill('roiChart');
+  charts.roiChart=new Chart(document.getElementById('roiChart'),{
+    data:{labels,datasets:[
+      {type:'bar',label:'Revenue (Kč)',data:rev,borderRadius:5,maxBarThickness:40,yAxisID:'y',order:3,
+        backgroundColor:rev.map((v,i)=>v>=cost[i]?'#4ade80cc':'#f87171cc')},
+      {type:'line',label:'Náklad (Kč)',data:cost,borderColor:'#f87171',borderDash:[6,4],borderWidth:2,pointRadius:0,fill:false,yAxisID:'y',order:2},
+      {type:'line',label:'Návratnost (%)',data:roi,borderColor:'#ffd166',backgroundColor:'#ffd166',borderWidth:2,tension:.3,pointRadius:2.5,yAxisID:'y1',order:1}
+    ]},
+    options:{...baseOpts,interaction:{mode:'index',intersect:false},
+      plugins:{legend:{labels:{color:'#9aa6c4',boxWidth:12,usePointStyle:true}},
+        tooltip:{callbacks:{
+          label:it=>it.dataset.yAxisID==='y1'?'  '+(it.raw==null?'—':fmt(it.raw,0)+' %'):'  '+fmt(it.raw,0)+' Kč',
+          afterBody:it=>{const i=it[0].dataIndex;return cost[i]>0?'násobek ×'+fmt(rev[i]/cost[i],2):'';}}}},
+      scales:{x:{...baseOpts.scales.x,grid:{display:false}},
+        y:{...baseOpts.scales.y,beginAtZero:true,position:'left',title:{display:true,text:'Kč',color:'#9aa6c4'}},
+        y1:{...baseOpts.scales.y,position:'right',grid:{drawOnChartArea:false},title:{display:true,text:'%',color:'#ffd166'}}}}});
 }
 /* data load */
 async function loadPrice(){
