@@ -79,6 +79,7 @@
   .tablewrap{max-height:360px;overflow:auto;border-radius:10px}
   .pos{color:var(--good)} .neg{color:var(--bad)} .tag{font-size:10.5px;color:var(--muted);font-weight:600}
 
+  .field select{background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:5px 8px;font:inherit}
   .pin{width:78px;background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:6px;padding:3px 5px;font-size:12.5px;text-align:right}
   .pin.man{border-color:var(--gold)}
   .meter{position:relative;height:10px;min-width:140px;background:var(--panel2);border-radius:6px;overflow:hidden}
@@ -103,6 +104,8 @@
         <button id="loadBtn">Načíst</button>
       </div>
       <div class="field price">PRL dnes $<input id="price" type="number" step="0.0001" value="0.66"><span id="priceSrc" style="font-size:11px"></span></div>
+      <div class="field">Den podle<select id="daymode" title="Podle čeho se připisuje těžba ke dni">
+        <option value="local">času připsání · Praha</option><option value="utc">času připsání · UTC</option><option value="epoch">času těžby (epocha) · UTC</option></select></div>
       <div class="field price">Odběr<input id="watts" type="number" step="10" placeholder="0">W</div>
       <div class="field price">Elektřina<input id="kwh" type="number" step="0.01" placeholder="0">Kč/kWh</div>
       <div class="field price">Kurz<input id="czk" type="number" step="0.01">Kč/USD</div>
@@ -155,7 +158,7 @@
       <div class="hint">Kolik jsi vytěžil každý den — nejnovější nahoře</div></div></div>
     <div class="tablewrap">
       <table id="dailyTable"><thead><tr>
-        <th>Den</th><th></th><th>Epochy</th><th>Vytěženo PRL</th><th>Kurz $</th><th>Hodnota USD</th><th>Hodnota CZK</th><th>Elektřina</th><th>Čistý zisk</th><th>Vyplaceno PRL</th>
+        <th>Den</th><th></th><th>Připsání</th><th>Vytěženo PRL</th><th>Kurz $</th><th>Hodnota USD</th><th>Hodnota CZK</th><th>Elektřina</th><th>Čistý zisk</th><th>Vyplaceno PRL</th>
       </tr></thead><tbody></tbody></table>
     </div>
   </div>
@@ -200,7 +203,16 @@ const LS=(k,d)=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):d;}c
 const SV=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}};
 const priceHist=LS('prl_price_hist',{}), priceManual=LS('prl_price_manual',{});
 const cfg=Object.assign({watts:0,kwh:0,czk:21.5},LS('prl_cfg',{}));
-const todayStr=()=>new Date().toISOString().slice(0,10);
+let dayMode=LS('prl_daymode','local'); // local = čas připsání (Praha), utc = čas připsání (UTC), epoch = štítek epochy (UTC)
+const fmtCZ=new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Prague'});
+const dayKeyOf=ts=>dayMode==='local'?fmtCZ.format(new Date(ts)):new Date(ts).toISOString().slice(0,10);
+const todayStr=()=>dayKeyOf(Date.now());
+function dayFrac(x){ // jak velká část dne už uplynula (pro poměrný náklad dneška)
+  if(dayMode==='epoch') return Math.min(x.epochs,24)/24;
+  const t=new Date().toLocaleString('sv-SE',{timeZone:dayMode==='utc'?'UTC':'Europe/Prague'});
+  return Math.max(.02,(+t.slice(11,13)+ +t.slice(14,16)/60)/24);
+}
+const cnt=x=>dayMode==='epoch'?`${x.epochs}/24 h`:`${x.epochs}× připsáno`;
 const costDay=()=>cfg.watts/1000*24*cfg.kwh;
 function priceFor(d){
   const all={...priceHist,...priceManual};
@@ -212,7 +224,7 @@ function priceFor(d){
 }
 function dayCalc(d,x,isToday){
   const pr=priceFor(d), usdV=x.prl*pr, czkV=usdV*cfg.czk;
-  const cost=costDay()*(isToday?Math.min(x.epochs,24)/24:1);
+  const cost=costDay()*(isToday?dayFrac(x):1);
   return {pr,usdV,czkV,cost,net:czkV-cost};
 }
 
@@ -223,11 +235,11 @@ function aggregate(data){
   for(const t of tx){
     if(/credit/i.test(t.reason)&&t.amount>0){
       const m=t.reason.match(/^Epoch (\d{4}-\d{2}-\d{2}) (\d{2}):/); if(!m) continue;
-      D(m[1]).prl+=t.amount; D(m[1]).epochs++; totalMined+=t.amount;
+      const k=dayMode==='epoch'?m[1]:dayKeyOf(t.timestamp); D(k).prl+=t.amount; D(k).epochs++; totalMined+=t.amount;
       hours[m[1]+' '+m[2]]=(hours[m[1]+' '+m[2]]||0)+t.amount;
     } else if(/payment/i.test(t.reason)&&t.amount<0){
       totalPaid+=-t.amount;
-      D(new Date(t.timestamp).toISOString().slice(0,10)).paid+=-t.amount;
+      D(dayKeyOf(t.timestamp)).paid+=-t.amount;
     }
   }
   const dayKeys=Object.keys(days).sort();
@@ -242,8 +254,8 @@ function render(data,meta){
   const A=aggregate(data); lastAgg=A;
   const selKeys=selectKeys(A.dayKeys);
   const now=new Date();
-  const todayKey=now.toISOString().slice(0,10);
-  const ydayKey=new Date(now.getTime()-86400000).toISOString().slice(0,10);
+  const todayKey=todayStr();
+  const ydayKey=dayKeyOf(now.getTime()-86400000);
   const E0={prl:0,epochs:0,paid:0};
   const dY=A.days[ydayKey]||E0, dT=A.days[todayKey]||E0;
   const cY=dayCalc(ydayKey,dY,false), cT=dayCalc(todayKey,dT,true);
@@ -256,15 +268,15 @@ function render(data,meta){
     `<div class="k">Včera vytěženo · ${dateLabel(ydayKey)}</div>
      <div class="v gold">${fmt(dY.prl,2)} <small>PRL</small></div>
      <div class="u">${usd(cY.usdV)} · ${Kc(cY.czkV)}</div>
-     <div class="s">kurz ${fmt(cY.pr,4)} $ • čistý zisk <b class="${sgn(cY.net)}">${Kc(cY.net)}</b> (${Uc(cY.net)}) • ${dY.epochs}/24 h${dY.epochs<24&&dY.epochs>0?' (neúplné)':''}</div>`;
+     <div class="s">kurz ${fmt(cY.pr,4)} $ • čistý zisk <b class="${sgn(cY.net)}">${Kc(cY.net)}</b> (${Uc(cY.net)}) • ${cnt(dY)}</div>`;
 
   // DNES zatím + odhad
-  const est=dT.epochs?dT.prl/dT.epochs*24:0;
+  const est=dayMode==='epoch'?(dT.epochs?dT.prl/dT.epochs*24:0):dT.prl/dayFrac(dT);
   document.getElementById('cardToday').innerHTML=
     `<div class="k">Dnes zatím · ${dateLabel(todayKey)}</div>
      <div class="v gold">${fmt(dT.prl,2)} <small>PRL</small></div>
      <div class="u">${usd(cT.usdV)} · ${Kc(cT.czkV)}</div>
-     <div class="s">kurz ${fmt(cT.pr,4)} $ • čistý zisk zatím <b class="${sgn(cT.net)}">${Kc(cT.net)}</b> • ${dT.epochs}/24 h • odhad dne ~${fmt(est,1)} PRL (${usd(est*cT.pr)})</div>`;
+     <div class="s">kurz ${fmt(cT.pr,4)} $ • čistý zisk zatím <b class="${sgn(cT.net)}">${Kc(cT.net)}</b> • ${cnt(dT)} • odhad dne ~${fmt(est,1)} PRL (${usd(est*cT.pr)})</div>`;
 
   // průměr za posledních 7 ÚPLNÝCH dní, každý den svou cenou
   const full=A.dayKeys.filter(d=>d!==todayKey).slice(-7), n=full.length||1;
@@ -279,6 +291,10 @@ function render(data,meta){
   // celkem (každý den svou cenou)
   const tUsd=sum(A.dayKeys,d=>C[d].usdV), pUsd=sum(A.dayKeys,d=>A.days[d].paid*priceFor(d));
   const cd=costDay(), hasCfg=cfg.watts>0&&cfg.kwh>0;
+  // připsáno v posledních 4/12/24 h (podle času připsání, stejně jako pool)
+  const nowMs=Date.now(), txs=(data.balance_transactions||[]).filter(t=>/credit/i.test(t.reason)&&t.amount>0);
+  const roll=h=>txs.filter(t=>t.timestamp>nowMs-h*3600e3).reduce((a,t)=>a+t.amount,0);
+  const r4=roll(4), r12=roll(12), r24=roll(24);
   // výnosnost (úplné dny, každý den svou cenou)
   const fullAll=A.dayKeys.filter(d=>d!==todayKey);
   const per=k=>({n:k.length,usd:sum(k,d=>C[d].usdV),rev:sum(k,d=>C[d].czkV),cost:sum(k,d=>C[d].cost)});
@@ -286,6 +302,7 @@ function render(data,meta){
   const roi7=P7.cost>0?(P7.rev-P7.cost)/P7.cost:null;
   const strip=[
     {k:'Aktuální hashrate',v:fmtHash(A.hashNow),cls:'acc',s:A.workers.length+' workerů • '+A.gpu+' GPU'},
+    {k:'Připsáno za 24 h',v:fmt(r24,2)+' <small>PRL</small>',cls:'gold',u:usd(r24*cT.pr),s:`jako „Credited“ na poolu • 12 h: ${fmt(r12,2)} • 4 h: ${fmt(r4,2)} PRL`},
     {k:'Elektřina / den',v:Kc(cd),cls:'neg',u:Uc(cd),s:hasCfg?`${fmt(cfg.watts,0)} W • ${fmt(cfg.watts*24/1000,1)} kWh • ${fmt(cfg.kwh,2)} Kč/kWh`:'vyplň odběr a cenu nahoře'},
     {k:'Čistý zisk / den',v:Kc(avgNet),cls:sgn(avgNet),u:Uc(avgNet),s:'Ø 7 dní − elektřina'},
     {k:'Návratnost (7 dní)',v:roi7==null?'—':(roi7>=0?'+':'')+fmt(roi7*100,0)+' %',cls:roi7==null?'':sgn(roi7),u:roi7==null?'':'×'+fmt(1+roi7,2),s:'čistý zisk ÷ náklad'},
@@ -331,7 +348,7 @@ function render(data,meta){
     const x=A.days[d], c=C[d];
     const cls=d===ydayKey?'yday':(d===todayKey?'today':'');
     const tag=d===ydayKey?'<span class="tag"> včera</span>':(d===todayKey?'<span class="tag"> dnes</span>':'');
-    const part=(d===todayKey||x.epochs<24)?`<span class="tag"> ${x.epochs}/24</span>`:'';
+    const part=(dayMode==='epoch'&&(d===todayKey||x.epochs<24))?`<span class="tag"> ${x.epochs}/24</span>`:'';
     return `<tr class="${cls}"><td>${dateLabel(d)}${tag}</td><td>${part}</td>
       <td>${x.epochs||'—'}</td><td>${fmt(x.prl,3)}</td>
       <td><input class="pin${priceManual[d]>0?' man':''}" type="number" step="0.0001" data-d="${d}" value="${c.pr.toFixed(4)}"></td>
@@ -521,6 +538,8 @@ document.getElementById('loadBtn').addEventListener('click',()=>setAccount(docum
 document.getElementById('addrInput').addEventListener('keydown',e=>{if(e.key==='Enter')setAccount(e.target.value);});
 document.getElementById('refresh').addEventListener('click',loadData);
 const $=id=>document.getElementById(id);
+$('daymode').value=dayMode;
+$('daymode').addEventListener('change',e=>{dayMode=e.target.value;SV('prl_daymode',dayMode);if(lastData)render(lastData,lastMeta);});
 $('watts').value=cfg.watts||''; $('kwh').value=cfg.kwh||''; $('czk').value=cfg.czk||'';
 ['watts','kwh','czk'].forEach(id=>$(id).addEventListener('change',()=>{
   cfg.watts=parseFloat($('watts').value)||0; cfg.kwh=parseFloat($('kwh').value)||0; cfg.czk=parseFloat($('czk').value)||0;
